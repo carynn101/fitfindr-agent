@@ -1,0 +1,25 @@
+Search relevance check
+Produced by: check_relevance.py::main · 2026-10-13 00:12
+
+search_listings('graphic tee', size=None, max_price=30.0) -> 6 results
+    lst_002  $18.0   Y2K Baby Tee — Butterfly Print  ['y2k', 'vintage', 'graphic tee', 'cottagecore']
+    lst_033  $19.0   Vintage Band Tee — Faded Grey  ['vintage', 'grunge', 'band tee', 'graphic tee', 'streetwear']
+    lst_006  $24.0   Graphic Tee — 2003 Tour Bootleg Style  ['graphic tee', 'vintage', 'grunge', 'streetwear', 'band tee']
+    lst_017  $15.0   Mesh Long-Sleeve Top — Black  ['y2k', 'grunge', 'goth', 'layering']
+    lst_015  $26.0   Vintage Graphic Hoodie — Faded Black  ['vintage', 'grunge', 'graphic', 'streetwear']
+    lst_011  $27.0   Low-Rise Cargo Pants — Khaki  ['y2k', 'cargo', '2000s', 'streetwear']
+
+search_listings('90s track jacket', size=None, max_price=None) -> 10 results
+    lst_004  $45.0   90s Track Jacket — Navy/White Stripe  ['90s', 'vintage', 'athletic', 'streetwear']
+    lst_022  $75.0   90s Leather Bomber — Black  ['90s', 'vintage', 'leather', 'classic', 'grunge']
+    lst_034  $14.0   Bucket Hat — Reversible, Brown Plaid  ['90s', 'streetwear', 'vintage', 'accessories']
+    lst_013  $30.0   90s Silk Slip Dress — Floral, Midi Length  ['90s', 'vintage', 'feminine', 'floral', 'cottagecore']
+    lst_031  $36.0   Baggy Carpenter Jeans — Dark Wash  ['90s', 'vintage', 'streetwear', 'baggy', 'workwear']
+    lst_010  $40.0   Vintage Windbreaker — Color Block Purple/Teal  ['90s', 'vintage', 'athletic', 'color block', 'streetwear']
+    lst_007  $42.0   Denim Jacket — Light Wash, Cropped  ['denim', 'vintage', 'classic', 'streetwear']
+    lst_019  $48.0   Platform Sneakers — White Chunky Sole  ['y2k', 'platform', '90s', 'streetwear']
+    lst_009  $55.0   Platform Mary Janes — Black Patent  ['y2k', 'goth', 'platform', '90s']
+    lst_032  $33.0   Shacket — Olive Canvas  ['earth tones', 'classic', 'layering', 'minimal']
+
+explain_empty_search for 'graphic tee under $10':
+    Nothing matching 'graphic tee' under $10. The cheapest match is $15 (Mesh Long-Sleeve Top — Black on Depop). Try raising your max price to $15.
