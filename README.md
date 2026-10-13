@@ -191,6 +191,45 @@ Can't write a fit card without an outfit suggestion for Graphic Tee — 2003 Tou
 
 ---
 
+# Part 2 — Testing
+
+## Stretch Features (declared before building)
+
+1. **Second tool on MCP.** `search_listings` is the required MCP tool. `create_fit_card` will also be exposed through `mcp_server.py`, so the agent calls both through `mcp_client.call_tool`. The Loop Trace will show both MCP calls.
+2. **Retry with looser constraints.** When a search with a size filter comes back empty, the agent retries **once** without the size filter. If the retry finds results, the run continues and tells the user which constraint was dropped, for example: *"Nothing in size XS, so I dropped the size filter and found this in M."* If the retry is also empty, or the query had no size filter, the agent stops exactly as before. Criterion 2's test query (`designer ballgown`) has no matches even without a size, so it still stops before `suggest_outfit`.
+
+---
+
+## Run Log — Before
+
+_In progress._
+
+---
+
+## Verdicts and Diagnoses
+
+_In progress._
+
+---
+
+## Loop Trace
+
+_In progress._
+
+---
+
+## The Improvement
+
+_In progress._
+
+---
+
+## What's Still Broken
+
+_In progress._
+
+---
+
 ## Data Model
 
 FitFindr searches 40 secondhand listings across Depop, Poshmark, and thredUp.
