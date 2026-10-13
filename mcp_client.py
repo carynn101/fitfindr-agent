@@ -28,6 +28,7 @@ right trade for one unit.
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -72,9 +73,19 @@ async def _call(name: str, arguments: dict):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
+    import config
+
+    # The server is a separate process with its own config. Pass the cache
+    # setting through, so run_eval.py's "cache off" also applies to tools
+    # running on the server. Without this, MCP tools would answer from cache
+    # during evaluation.
+    env = dict(os.environ)
+    env["AI201_CACHE"] = "1" if config.CACHE_ENABLED else "0"
+
     params = StdioServerParameters(
         command=sys.executable,
         args=[str(SERVER)],
+        env=env,
     )
 
     async with stdio_client(params) as (read, write):

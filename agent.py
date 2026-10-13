@@ -7,6 +7,9 @@ tool reads its inputs from the session rather than from the previous call.
 
     python agent.py          runs a matching query and an impossible one
 
+search_listings and create_fit_card are called through the MCP server
+(mcp_server.py) via mcp_client.call_tool. suggest_outfit is called directly.
+
 Branch rule:
     If search_listings returns an empty list, work out which filter caused it,
     put a message naming what to change in session["error"], and stop.
@@ -18,8 +21,9 @@ import re
 
 import config
 import trace
-from tools import search_listings, suggest_outfit, create_fit_card, _platform
+from tools import suggest_outfit, _platform
 from generate import ModelUnavailable  # noqa: F401 — handled in unit 4
+from mcp_client import call_tool
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -42,6 +46,22 @@ def new_session(query: str, wardrobe: dict) -> dict:
         "error": None,               # set when the run ended early
         "steps": [],                 # the order the loop ran its steps in
     }
+
+
+# ── MCP-backed tool calls ─────────────────────────────────────────────────────
+
+def _search(description: str, size: str | None, max_price: float | None) -> list[dict]:
+    """search_listings, called through the MCP server. Every search goes through here."""
+    return call_tool("search_listings", {
+        "description": description,
+        "size": size,
+        "max_price": max_price,
+    })
+
+
+def _fit_card(outfit: str, new_item: dict) -> str:
+    """create_fit_card, called through the MCP server."""
+    return call_tool("create_fit_card", {"outfit": outfit, "new_item": new_item})
 
 
 # ── query parsing (regex, no model call) ─────────────────────────────────────
@@ -108,7 +128,7 @@ def explain_empty_search(parsed: dict) -> str:
     price_part = f" under ${price:g}" if price is not None else ""
 
     if price is not None:
-        without_price = search_listings(desc, size, None)
+        without_price = _search(desc, size, None)
         if without_price:
             cheapest = min(without_price, key=lambda l: l["price"])
             return (
@@ -119,7 +139,7 @@ def explain_empty_search(parsed: dict) -> str:
             )
 
     if size:
-        without_size = search_listings(desc, None, price)
+        without_size = _search(desc, None, price)
         if without_size:
             sizes = sorted({l["size"] for l in without_size})
             return (
@@ -128,7 +148,7 @@ def explain_empty_search(parsed: dict) -> str:
                 f"leave the size out."
             )
 
-    if size and price is not None and search_listings(desc, None, None):
+    if size and price is not None and _search(desc, None, None):
         return (
             f"Nothing matching '{desc}' with both size {size} and a "
             f"${price:g} limit. Try removing the size and raising your price."
@@ -169,7 +189,7 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
         elif next_step == "search":
             p = session["parsed"]
-            session["search_results"] = search_listings(
+            session["search_results"] = _search(
                 p["description"], p["size"], p["max_price"]
             )
             # ── THE BRANCH ──
@@ -193,7 +213,7 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             next_step = "create_fit_card"
 
         elif next_step == "create_fit_card":
-            session["fit_card"] = create_fit_card(
+            session["fit_card"] = _fit_card(
                 session["outfit_suggestion"], session["selected_item"]
             )
             next_step = "done"
