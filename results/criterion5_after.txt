@@ -1,0 +1,38 @@
+Criterion 5 — size filter, whole-token matching
+Produced by: check_size_filter.py::main · 2026-10-13 00:16
+Query: search_listings('vintage', size=X) via MCP
+
+Try 1: size='M' -> 10 listings -> PASS
+    lst_020  size 'M'                  Henley Long Sleeve — Washed Burgundy
+    lst_002  size 'S/M'                Y2K Baby Tee — Butterfly Print
+    lst_024  size 'M'                  Vintage Polo Shirt — Forest Green
+    lst_030  size 'M'                  Vintage Knit Vest — Argyle Brown/Cream
+    lst_038  size 'M'                  Denim Vest — Medium Wash, Studded
+    lst_029  size 'M'                  Silk Button-Down — Sage Green
+    lst_013  size 'M'                  90s Silk Slip Dress — Floral, Midi Length
+    lst_018  size 'M/L'                Vintage Linen Blazer — Cream
+    lst_004  size 'M'                  90s Track Jacket — Navy/White Stripe
+    lst_022  size 'M'                  90s Leather Bomber — Black
+
+Try 2: size='S' -> 3 listings -> PASS
+    lst_002  size 'S/M'                Y2K Baby Tee — Butterfly Print
+    lst_007  size 'S'                  Denim Jacket — Light Wash, Cropped
+    lst_036  size 'S'                  Velvet Blazer — Emerald Green
+
+Try 3: size='L' -> 5 listings -> PASS
+    lst_033  size 'L'                  Vintage Band Tee — Faded Grey
+    lst_006  size 'L'                  Graphic Tee — 2003 Tour Bootleg Style
+    lst_015  size 'L'                  Vintage Graphic Hoodie — Faded Black
+    lst_018  size 'M/L'                Vintage Linen Blazer — Cream
+    lst_010  size 'L'                  Vintage Windbreaker — Color Block Purple/Teal
+
+Try 4: size='XL' -> 3 listings -> PASS
+    lst_012  size 'XL (fits oversized)' Oversized Crewneck Sweatshirt — Vintage Navy
+    lst_027  size 'XL'                 Oversized College Crewneck — Faded Red
+    lst_003  size 'XL (oversized)'     Oversized Flannel Shirt — Plaid Red/Black
+
+Try 5: size='W30' -> 2 listings -> PASS
+    lst_021  size 'W30'                Straight Leg Khaki Trousers — Olive
+    lst_001  size 'W30 L30'            Vintage Levi's 501 Jeans — Medium Wash
+
+Result: 5 of 5 sizes returned no rule-breaking listings.
