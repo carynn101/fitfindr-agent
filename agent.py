@@ -11,10 +11,13 @@ search_listings and create_fit_card are called through the MCP server
 (mcp_server.py) via mcp_client.call_tool. suggest_outfit is called directly.
 
 Branch rule:
-    If search_listings returns an empty list, work out which filter caused it,
-    put a message naming what to change in session["error"], and stop.
-    Otherwise, take the first result and go to suggest_outfit, then
-    create_fit_card.
+    If search_listings returns results, take the first one and go to
+    suggest_outfit, then create_fit_card.
+    If it returns an empty list and the query had a size, retry once without
+    the size (stretch). If the retry finds results, continue with them and tell
+    the user the size was dropped; if not, fall through to the next case.
+    If it's empty with no size (or after a failed retry), work out which filter
+    caused it, put a message naming what to change in session["error"], and stop.
 """
 
 import re
@@ -44,6 +47,8 @@ def new_session(query: str, wardrobe: dict) -> dict:
         "outfit_suggestion": None,   # what suggest_outfit returned
         "fit_card": None,            # what create_fit_card returned
         "error": None,               # set when the run ended early
+        "dropped_filter": None,      # "size" if the retry dropped it (stretch)
+        "notice": None,              # message shown alongside results after a retry
         "steps": [],                 # the order the loop ran its steps in
     }
 
@@ -62,6 +67,12 @@ def _search(description: str, size: str | None, max_price: float | None) -> list
 def _fit_card(outfit: str, new_item: dict) -> str:
     """create_fit_card, called through the MCP server."""
     return call_tool("create_fit_card", {"outfit": outfit, "new_item": new_item})
+
+
+def _fmt_parsed(p: dict) -> str:
+    """Parsed filters as readable text for the trace (the trace hides dict values)."""
+    return (f"description={p.get('description')!r}, size={p.get('size')!r}, "
+            f"max_price={p.get('max_price')!r}")
 
 
 # ── failure messages ──────────────────────────────────────────────────────────
@@ -214,7 +225,8 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
         if next_step == "parse":
             session["parsed"] = parse_query(session["query"])
-            trace.step("parse_query", inputs=session["query"], returned=session["parsed"])
+            trace.step("parse_query", inputs=session["query"],
+                       returned=_fmt_parsed(session["parsed"]))
             next_step = "search"
 
         elif next_step == "search":
@@ -229,24 +241,59 @@ def run_agent(query: str, wardrobe: dict) -> dict:
                     f"Run `python mcp_client.py` to check the MCP server starts, "
                     f"then ask again."
                 )
-                trace.step("search_listings (via MCP)", inputs=p,
+                trace.step("search_listings (via MCP)", inputs=_fmt_parsed(p),
                            returned="MCPError", note="search unavailable, stopping")
                 next_step = "done"
                 continue
 
             # ── THE BRANCH ──
-            if not session["search_results"]:
-                next_step = "explain_empty"
-                note = "branch: empty, going to explain_empty and stopping"
-            else:
+            if session["search_results"]:
                 next_step = "select"
                 note = "branch: results found, going to select"
-            trace.step("search_listings (via MCP)", inputs=p,
+            elif p["size"]:
+                next_step = "retry_without_size"
+                note = "branch: empty with a size filter, retrying once without size"
+            else:
+                next_step = "explain_empty"
+                note = "branch: empty, going to explain_empty and stopping"
+            trace.step("search_listings (via MCP)", inputs=_fmt_parsed(p),
                        returned=session["search_results"], note=note)
+
+        elif next_step == "retry_without_size":
+            # Stretch: retry once with the size filter dropped.
+            p = session["parsed"]
+            retry_inputs = _fmt_parsed({**p, "size": None})
+            try:
+                retry = _search(p["description"], None, p["max_price"])
+            except MCPError as exc:
+                session["error"] = (
+                    f"Couldn't reach the listings search service: {_mcp_detail(exc)} "
+                    f"Run `python mcp_client.py` to check the MCP server starts, "
+                    f"then ask again."
+                )
+                trace.step("search_listings (via MCP), retry", inputs=retry_inputs,
+                           returned="MCPError", note="search unavailable, stopping")
+                next_step = "done"
+                continue
+
+            if retry:
+                session["search_results"] = retry
+                session["dropped_filter"] = "size"
+                session["notice"] = (
+                    f"Nothing in size {p['size']}, so I dropped the size filter. "
+                    f"This one is size {retry[0].get('size')}."
+                )
+                next_step = "select"
+                note = f"dropped constraint: size ({p['size']}); results found, going to select"
+            else:
+                next_step = "explain_empty"
+                note = f"dropped constraint: size ({p['size']}); still empty, going to explain_empty"
+            trace.step("search_listings (via MCP), retry", inputs=retry_inputs,
+                       returned=retry, note=note)
 
         elif next_step == "explain_empty":
             session["error"] = explain_empty_search(session["parsed"])
-            trace.step("explain_empty", inputs=session["parsed"],
+            trace.step("explain_empty", inputs=_fmt_parsed(session["parsed"]),
                        returned=session["error"],
                        note="re-ran search via MCP with filters relaxed; stopping before suggest_outfit")
             next_step = "done"
@@ -305,6 +352,8 @@ def _show(session: dict) -> None:
         return
 
     item = session["selected_item"] or {}
+    if session.get("notice"):
+        print(f"  note:     {session['notice']}")
     print(f"  found:    {item.get('title')} — ${item.get('price')} on {item.get('platform')} [{item.get('id')}]")
     print(f"  outfit:   {session['outfit_suggestion']}")
     print(f"  fit card: {session['fit_card']}")
