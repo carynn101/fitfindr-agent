@@ -4,13 +4,13 @@
 
 FitFindr is a tool-using agent, not a fixed pipeline: a planning loop chooses its next step based on what the previous tool returned, and carries results between steps in an explicit session state.
 
-**Stack:** Python 3.13 · Google Gemini API · step-based planning loop with branching · regex query parsing · JSON listing data
+**Stack:** Python 3.13 · Google Gemini API · Model Context Protocol (MCP) · step-based planning loop with branching · regex query parsing · repeated-trial evaluation
 
 ---
 
 ## What This Does
 
-You describe what you're shopping for in plain language, for example *"vintage graphic tee under $30, size M"*, and FitFindr pulls out the item, size, and price ceiling, then searches 40 secondhand listings from Depop, Poshmark, and thredUp. For the best match, it suggests one or two complete outfits using pieces you already own, or general styling advice if you haven't shared a wardrobe, and writes a short, post-ready caption that includes the price and platform. If nothing matches, it stops before calling the model and tells you which filter to change, for example: *"Nothing matching 'graphic tee' under $10. The cheapest match is $15 (Mesh Long-Sleeve Top — Black on Depop). Try raising your max price to $15."*
+You describe what you're shopping for in plain language, for example *"vintage graphic tee under $30, size M"*, and FitFindr pulls out the item, size, and price ceiling, then searches 40 secondhand listings from Depop, Poshmark, and thredUp. For the best match, it suggests one or two complete outfits using pieces you already own, or general styling advice if you haven't shared a wardrobe, and writes a short, post-ready caption that includes the price and platform. If a search with a size comes back empty, it retries once without the size and tells you it did. If nothing matches at all, it stops before calling the model and tells you which filter to change, for example: *"Nothing matching 'graphic tee' under $10. The cheapest match is $18 (Y2K Baby Tee — Butterfly Print on Depop). Try raising your max price to $18."*
 
 ---
 
@@ -28,6 +28,8 @@ All three tools live in `tools.py` and can be run and tested independently.
 **Size-matching rule:** The listing's `size` is lowercased and split into tokens on spaces, slashes, and parentheses. A listing matches only if the user's size equals one whole token. So `M` matches `"M"` and `"S/M"`, but not `"XL (oversized)"`, and `S` does not match `"US 9"`. Plain substring matching was rejected because `"l" in "xl"` is True.
 
 **Scoring rule:** The description is lowercased, split into words, and stripped of filler words ("a", "the", "for", "looking"…). Each remaining word scores **2 points** if it appears in the listing's `title`, `style_tags`, or `category`, and **1 point** if it appears only in `description`, `colors`, or `brand`. Listings that score 0 are dropped.
+
+**Relevance cutoff (added in Unit 4):** after scoring, only listings scoring more than half of the best match's score are kept. See The Improvement.
 
 ### `suggest_outfit`
 
@@ -49,13 +51,16 @@ All three tools live in `tools.py` and can be run and tested independently.
 
 **Branch rule:** If `search_listings` returns an empty list, go to `explain_empty`: put a message in `session["error"]` naming which filter to change, and **stop**. In that case `suggest_outfit` and `create_fit_card` are never called, and `session["fit_card"]` stays `None`. Otherwise, go to `select`: put the first (highest-scoring) result in `session["selected_item"]`, then run `suggest_outfit`, then `create_fit_card`.
 
+**Added in Unit 4:** `search_listings` and `create_fit_card` are called through MCP (`mcp_server.py`). If a search with a size filter comes back empty, the loop retries once without the size (`retry_without_size` step) before falling through to `explain_empty`. Model and MCP failures stop the run with a message instead of crashing.
+
 **Where it lives:** `agent.py::run_agent`
 
 The loop is a `while` loop over named steps. Each pass runs one step, and that step chooses the next one based on what it returned. Every pass calls `trace.check_iterations()` so the loop can't run away (`config.MAX_ITERATIONS = 10`).
 
 ```
-match:     parse → search → select → suggest_outfit → create_fit_card → done
-no match:  parse → search → explain_empty → done
+match:        parse → search → select → suggest_outfit → create_fit_card → done
+size retry:   parse → search → retry_without_size → select → suggest_outfit → create_fit_card → done
+no match:     parse → search → [retry_without_size →] explain_empty → done
 ```
 
 **How the query is parsed:** With regex in `agent.py::parse_query`, not a model call, so parsing is deterministic and uses none of the 15-requests-per-minute quota. A dollar amount (`$30`, `under 30`) becomes `max_price` (float). `size <X>` becomes `size` (this also handles `size W30 L30` and `size 8`). The remaining words, minus filler, become `description`. The result is stored in `session["parsed"]`.
@@ -67,6 +72,8 @@ no match:  parse → search → explain_empty → done
 ---
 
 ## Sample Run
+
+*Captured in Unit 3, before the Unit 4 changes (MCP, retry, relevance cutoff). For current behavior, see Loop Trace and Run Log — After below.*
 
 **One full query**
 
@@ -188,6 +195,12 @@ Can't write a fit card without an outfit suggestion for Graphic Tee — 2003 Tou
 - *What I asked for:* I gave Claude my `search_listings` spec (whole-token size matching, 2-point/1-point keyword scoring) and had it generate the implementation.
 - *What came back:* A function that passed my empty-case test, but my first real query, `search_listings('graphic tee', max_price=30)`, returned two items that aren't graphic tees: `Low-Rise Cargo Pants — Khaki` and `Mesh Long-Sleeve Top`.
 - *What I changed:* I printed both listings' `style_tags` and `description` to find the cause. Neither has "graphic" or "tee" in its title or tags. Their descriptions mention a tee as something to wear *with* them ("layering with a long tee" scores 1 point, "layering under a graphic tee" scores 2). Real graphic tees score 4, so the agent still selects the right item. I then checked whether the bug reached anywhere else, and it does: `python app.py ask 'graphic tee under $10'` suggests the mesh top as the "cheapest match," because the empty-search diagnosis reuses the same scoring. I decided not to change the scoring yet, because my criteria were already committed. I recorded it as one root cause with two symptoms, to measure and fix in Unit 4.
+
+**Moment 3 (Unit 4): A cache problem hidden by MCP**
+
+- *What I asked for:* Help moving `search_listings` and `create_fit_card` onto MCP.
+- *What came back:* Along with the server code, Claude pointed out that `run_eval.py` turns the cache off only inside the agent's process, while `mcp_client` starts the server as a separate process with its own config, so fit cards made on the server would be served from cache during testing.
+- *What I changed:* I passed `AI201_CACHE` through the server's environment in `mcp_client.py::_call`. The evidence that it worked: all 5 fit cards were distinct in both test runs. Separately, the usage line going from "2 served from cache" to "1" confirmed that calls made inside the server are invisible to the agent. I also checked Claude's first diagnosis of the search problem against a score printout. It showed two surface causes rather than one (description mentions, and single broad words like "90s"), so I picked a fix based on the mechanism the printout showed both share.
 
 ---
 
@@ -319,19 +332,126 @@ The tool works as specified. The spec's own rule ("listings scoring 0 are droppe
 
 ## Loop Trace
 
-_In progress._
+Printed by `trace.step()` calls in `agent.py::run_agent`. Both MCP tools appear as `(via MCP)`. From `results/run_2026-10-13_0021_after.md`.
+
+**Happy path** (`vintage graphic tee under $30`):
+
+```
+[1] parse_query
+      in:  vintage graphic tee under $30
+      out: description='vintage graphic tee', size=None, max_price=30.0
+[2] search_listings (via MCP)
+      in:  description='vintage graphic tee', size=None, max_price=30.0
+      out: 4 items: Y2K Baby Tee — Butterfly Print, Vintage Band Tee — Faded Grey, Graphic Tee — 2003 Tour Bootleg Style … +1 more
+      →    branch: results found, going to select
+[3] select
+      in:  4 results
+      out: Y2K Baby Tee — Butterfly Print ($18.0, depop)
+      →    top result, id lst_002
+[4] suggest_outfit
+      in:  new_item id lst_002 (Y2K Baby Tee — Butterfly Print), wardrobe: 10 items
+      out: Buy it. At eighteen dollars, it adds a fun pop of color to your closet.   Outfit one: Pair the Y2K Baby Tee wi…
+[5] create_fit_card (via MCP)
+      in:  outfit (486 chars), new_item id lst_002 (Y2K Baby Tee — Butterfly Print)
+      out: Snagged this cute little butterfly tee on Depop for just $18. Totally worth it for an easy pop of color. I lov…
+```
+
+**Empty search** (`designer ballgown size XXS under $5`). It's shorter because it stops before `suggest_outfit`:
+
+```
+[1] parse_query
+      in:  designer ballgown size XXS under $5
+      out: description='designer ballgown', size='XXS', max_price=5.0
+[2] search_listings (via MCP)
+      in:  description='designer ballgown', size='XXS', max_price=5.0
+      out: [] (empty)
+      →    branch: empty with a size filter, retrying once without size
+[3] search_listings (via MCP), retry
+      in:  description='designer ballgown', size=None, max_price=5.0
+      out: [] (empty)
+      →    dropped constraint: size (XXS); still empty, going to explain_empty
+[4] explain_empty
+      in:  description='designer ballgown', size='XXS', max_price=5.0
+      out: No listings match 'designer ballgown' at all. Try broader words, like a category ('dress', 'jacket', 'jeans') …
+      →    re-ran search via MCP with filters relaxed; stopping before suggest_outfit
+```
+
+**Stretch: retry with looser constraints** (`90s track jacket size XS`, diagnostic scenario, 5 of 5 tries identical in structure). The trace names the dropped constraint, and the user sees `Note: Nothing in size XS, so I dropped the size filter. This one is size M.`
+
+```
+[2] search_listings (via MCP)
+      in:  description='90s track jacket', size='XS', max_price=None
+      out: [] (empty)
+      →    branch: empty with a size filter, retrying once without size
+[3] search_listings (via MCP), retry
+      in:  description='90s track jacket', size=None, max_price=None
+      out: 1 items: 90s Track Jacket — Navy/White Stripe
+      →    dropped constraint: size (XS); results found, going to select
+```
+
+### Failure modes, triggered on purpose
+
+| Failure | How I triggered it | What the agent said | Handler |
+|---|---|---|---|
+| Empty search | `designer ballgown size XXS under $5` | *"No listings match 'designer ballgown' at all. Try broader words, like a category ('dress', 'jacket', 'jeans') or a style ('vintage', 'y2k', 'streetwear')."* | Already handled by the Unit 3 branch (`agent.py::explain_empty_search`) |
+| Empty wardrobe | `python app.py ask 'denim jacket under $50' --empty-wardrobe` | General styling advice ("high-waisted black wide-leg trousers, a fitted white baby tee…"), no crash | Already handled in `tools.py::suggest_outfit` |
+| Model unavailable | Changed one character of the key, ran a new query | **Before the handler:** `ModelUnavailable: The model rejected your API key…`, raised out of `run_agent`, which lost the session (the search had already found an item). **After:** *"Found Platform Sneakers — White Chunky Sole ($48 on Poshmark), but couldn't reach the AI model to suggest outfits. The model rejected your API key. Check GEMINI_API_KEY in your .env file, or create a fresh key at aistudio.google.com. Your search still worked. Run `python test.py` to check the connection, then ask again."* | Added in `agent.py::run_agent`: catches `ModelUnavailable` (`suggest_outfit`) and `MCPError` (`create_fit_card` on the server, and search) |
+
+**On the MCP move:** `search_listings` (required) and `create_fit_card` (stretch) are registered in `mcp_server.py`. `agent.py` calls them through `mcp_client.call_tool` via `_search()` and `_fit_card()`. Every search goes through MCP, including the retry and the empty-search diagnosis. The return values were identical to the direct calls: same items, same outfit, same fit card, same empty-search message. Three things behaved differently:
+1. **The cache didn't follow the setting.** The server is a separate process with its own `config`, so `run_eval.py`'s cache-off would *not* have reached `create_fit_card`, and all 5 fit-card tries would have come back identical from cache. I fixed this by passing `AI201_CACHE` through the server's environment in `mcp_client.py::_call`.
+2. **The usage line undercounts.** Before MCP, a cached run reported "2 served from cache"; after, "1 served from cache." The eval reports "36 model calls" for runs that made about 70. Calls made inside the server process aren't counted by the agent.
+3. **It's slower.** `call_tool` starts the server for every call, so the empty-search path (up to 5 searches) takes a few seconds.
 
 ---
 
 ## The Improvement
 
-_In progress._
+**What I changed:** One rule in `tools.py::search_listings`. After scoring, keep only listings that score **more than half of the best match's score**. Before, any listing scoring above 0 was kept.
+
+**Which failure it was meant to fix:** The search-relevance failure from my diagnosis: listings sharing one word with the query (the mesh top and cargo pants for "graphic tee", a Bucket Hat for "90s track jacket"). That caused three symptoms: irrelevant results, a wrong "cheapest match" in the empty-search message, and noisy retry results. The score printout showed a single mechanism behind all three: low-scoring partial matches were never filtered out relative to the best match.
+
+**Direct measure** (`check_relevance.py::main`; `results/relevance_before.txt` and `results/relevance_after.txt`):
+
+| Probe | Before | After |
+|---|---|---|
+| `search_listings('graphic tee', max_price=30)` | 6 results, including the mesh top, hoodie, and cargo pants | 3 results, all tees |
+| `search_listings('90s track jacket')` | 10 results, 1 of them a track jacket (plus a bucket hat, Mary Janes, a slip dress…) | 1 result, the track jacket |
+| Empty-search message for `graphic tee under $10` | "cheapest match is $15 (Mesh Long-Sleeve Top)" | "cheapest match is $18 (Y2K Baby Tee)" |
+
+### Run Log — After
+
+Same format, same scenarios, cache off (`results/run_2026-10-13_0021_after.md`, `results/criterion5_after.txt`).
+
+| Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
+|---|---|---|---|---|---|---|---|
+| 1. Matching query completes all three tools and returns a fit card | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 2. Empty search stops before `suggest_outfit` with a message naming what to change | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. Item from search is the item `suggest_outfit` and `create_fit_card` receive (5 different queries) | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 4. Fit card has the price, the platform, and 15–80 words; at least 3 of 5 cards distinct | 4 of 5 + 3 distinct | PASS | PASS | PASS | PASS | PASS | MET (5/5, 5 distinct) |
+| 5. Size filter matches whole tokens only (sizes M, S, L, XL, W30) | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+
+Every scenario selected the same item as in the before-run, while returning far fewer off-target results:
+
+| Scenario | `search_results` before → after | Selected item |
+|---|---|---|
+| A: vintage graphic tee under $30 | 10 → 4 | lst_002 (same) |
+| B: 90s track jacket in size M | 4 → 1 | lst_004 (same) |
+| C: denim jacket under $50 | 7 → 1 | lst_007 (same) |
+| E: corduroy pants under $40 | 2 → 1 | lst_005 (same) |
+| Retry: 90s track jacket, size dropped | 10 → 1 | lst_004 (same) |
+
+**Did it help, and how do I know:** Yes, for the failure it targeted. The direct measure shows all three symptoms gone, and the after-run shows all five criteria still met, with the same selected items. The run log alone can't show the improvement, because my criteria never covered relevance, which is itself a finding (see What's Still Broken). **It also cost something:** the cutoff removes reasonable near-matches. The 90s Leather Bomber no longer appears for "90s track jacket," and the denim vest no longer appears for "denim jacket."
 
 ---
 
 ## What's Still Broken
 
-_In progress._
+No criterion was missed in either run, so nothing here is a missed target. These are known failures my criteria don't catch:
+
+- **Fit cards contradict the outfit advice.** For platform sneakers, `suggest_outfit` advised against buying in 10 of 10 tries across both runs ("Skip these… you already own chunky white sneakers"). `create_fit_card` still wrote a post about it every time ("Almost bought these…", "Passed on these…"). *What I'd do:* pass the buy/skip recommendation into `create_fit_card`'s prompt, and add the criterion I named in my diagnosis ("the card's stance matches the recommendation, 5 of 5"). *Why I stopped:* the brief allows one improvement, and the relevance fix had the clearer mechanism and a direct measure.
+- **The relevance cutoff trades recall for precision.** Because it's relative to the top score, one strong match hides near-matches, like the Leather Bomber for "90s track jacket." *What I'd do:* score item type separately from style words, so "jacket" matching a jacket counts more than "90s" matching anything.
+- **Usage undercounts MCP calls.** Calls made inside the MCP server aren't counted in the agent's usage line. *What I'd do:* return usage alongside the tool result, or log it in the server.
+- **My criteria were too easy in places.** Criterion 1 should be 5 of 5, and criterion 4 checks for presence, not sense (see Diagnoses). I left `criteria.md` unchanged, since revising a criterion that was measurable and met isn't a legitimate revision.
 
 ---
 
@@ -363,6 +483,9 @@ pip install -r requirements.txt
 cp .env.example .env        # add your GEMINI_API_KEY
 python test.py              # environment check
 python app.py ask 'vintage graphic tee under $30'
+python app.py ask 'vintage graphic tee under $30' --trace   # step-by-step loop trace
+python mcp_client.py                                        # list the MCP server's tools
+python run_eval.py --label before                           # 5 tries per scenario, cache off
 ```
 
 📖 Full command reference: [RUNNING.md](RUNNING.md)
