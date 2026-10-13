@@ -1,0 +1,13 @@
+Search relevance check
+Produced by: check_relevance.py::main · 2026-10-13 00:15
+
+search_listings('graphic tee', size=None, max_price=30.0) -> 3 results
+    lst_002  $18.0   Y2K Baby Tee — Butterfly Print  ['y2k', 'vintage', 'graphic tee', 'cottagecore']
+    lst_033  $19.0   Vintage Band Tee — Faded Grey  ['vintage', 'grunge', 'band tee', 'graphic tee', 'streetwear']
+    lst_006  $24.0   Graphic Tee — 2003 Tour Bootleg Style  ['graphic tee', 'vintage', 'grunge', 'streetwear', 'band tee']
+
+search_listings('90s track jacket', size=None, max_price=None) -> 1 results
+    lst_004  $45.0   90s Track Jacket — Navy/White Stripe  ['90s', 'vintage', 'athletic', 'streetwear']
+
+explain_empty_search for 'graphic tee under $10':
+    Nothing matching 'graphic tee' under $10. The cheapest match is $18 (Y2K Baby Tee — Butterfly Print on Depop). Try raising your max price to $18.

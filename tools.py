@@ -125,6 +125,14 @@ def search_listings(
         if score > 0:
             scored.append((score, listing))
 
+    # Relevance cutoff (unit 4 improvement): keep only listings scoring more
+    # than half of the best match. A listing sharing one word with a
+    # three-word query (a bucket hat for "90s track jacket") no longer counts.
+    if not scored:
+        return []
+    top = max(score for score, _ in scored)
+    scored = [(score, listing) for score, listing in scored if score > top / 2]
+
     scored.sort(key=lambda pair: (-pair[0], pair[1].get("price", 0)))
     return [listing for _, listing in scored[: config.SEARCH_RESULT_LIMIT]]
 
