@@ -202,13 +202,118 @@ Can't write a fit card without an outfit suggestion for Graphic Tee — 2003 Tou
 
 ## Run Log — Before
 
-_In progress._
+Produced by `run_eval.py::main` (criteria 1–4, agent loop in `agent.py::run_agent`) and `check_size_filter.py::main` (criterion 5). Cache off, 5 tries each. Full output: `results/run_2026-10-12_2353_before.md` and `results/criterion5_before.txt`.
+
+| Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
+|---|---|---|---|---|---|---|---|
+| 1. Matching query completes all three tools and returns a fit card | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 2. Empty search stops before `suggest_outfit` with a message naming what to change | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. Item from search is the item `suggest_outfit` and `create_fit_card` receive (5 different queries) | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 4. Fit card has the price, the platform, and 15–80 words; at least 3 of 5 cards distinct | 4 of 5 + 3 distinct | PASS | PASS | PASS | PASS | PASS | MET (5/5, 5 distinct) |
+| 5. Size filter matches whole tokens only (sizes M, S, L, XL, W30) | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+
+For criterion 3, each try is a different query, as the criterion specifies: Try 1 = `vintage graphic tee under $30`, Try 2 = `90s track jacket in size M`, Try 3 = `denim jacket under $50`, Try 4 = `platform sneakers size 8`, Try 5 = `corduroy pants under $40` (try 1 of each scenario).
+
+**Real output from one try per criterion:**
+
+Criterion 1, try 1 (`run_eval.py::main` → `agent.py::run_agent`):
+```
+[3] select
+      in:  10 results
+      out: Y2K Baby Tee — Butterfly Print ($18.0, depop)
+      →    top result, id lst_002
+[4] suggest_outfit
+      in:  new_item id lst_002 (Y2K Baby Tee — Butterfly Print), wardrobe: 10 items
+      out: Outfit One: Pair the Y2K Baby Tee with your baggy straight-leg jeans, dark wash. Add the black combat boots an…
+[5] create_fit_card (via MCP)
+      in:  outfit (441 chars), new_item id lst_002 (Y2K Baby Tee — Butterfly Print)
+      out: Scored this little butterfly tee on Depop for just $18! 🦋 It's giving major Y2K energy paired with baggy denim…
+  try 1: completed — fit card 205 chars
+```
+
+Criterion 2, try 1 (`agent.py::run_agent`, ending in `agent.py::explain_empty_search`):
+```
+[2] search_listings (via MCP)
+      in:  description='designer ballgown', size='XXS', max_price=5.0
+      out: [] (empty)
+      →    branch: empty with a size filter, retrying once without size
+[3] search_listings (via MCP), retry
+      in:  description='designer ballgown', size=None, max_price=5.0
+      out: [] (empty)
+      →    dropped constraint: size (XXS); still empty, going to explain_empty
+[4] explain_empty
+      out: No listings match 'designer ballgown' at all. Try broader words, like a category ('dress', 'jacket', 'jeans') …
+      →    re-ran search via MCP with filters relaxed; stopping before suggest_outfit
+  try 1: stopped early — No listings match 'designer ballgown' at all. Try broader wo
+```
+
+Criterion 3, try 4 (`agent.py::run_agent`): the same id at all three steps:
+```
+[3] select
+      out: Platform Sneakers — White Chunky Sole ($48.0, poshmark)
+      →    top result, id lst_019
+[4] suggest_outfit
+      in:  new_item id lst_019 (Platform Sneakers — White Chunky Sole), wardrobe: 10 items
+[5] create_fit_card (via MCP)
+      in:  outfit (622 chars), new_item id lst_019 (Platform Sneakers — White Chunky Sole)
+```
+
+Criterion 4, try 1 (`tools.py::create_fit_card`, called through `mcp_server.py::create_fit_card`): 39 words, contains `$45` and `Poshmark`:
+```
+Scored this 90s navy track jacket on Poshmark for $45 and it bridges streetwear and vintage pieces effortlessly. Love wearing it zipped over baggy jeans or khaki trousers with chunky sneakers for that easy retro vibe. 🧥✨ #thrifted #streetwear
+```
+
+Criterion 5, try 3 (`check_size_filter.py::main` → `search_listings` via MCP): `L` does not match `XL`:
+```
+Try 3: size='L' -> 5 listings -> PASS
+    lst_033  size 'L'                  Vintage Band Tee — Faded Grey
+    lst_006  size 'L'                  Graphic Tee — 2003 Tour Bootleg Style
+    lst_015  size 'L'                  Vintage Graphic Hoodie — Faded Black
+    lst_018  size 'M/L'                Vintage Linen Blazer — Cream
+    lst_010  size 'L'                  Vintage Windbreaker — Color Block Purple/Teal
+```
 
 ---
 
 ## Verdicts and Diagnoses
 
-_In progress._
+| # | Criterion | Target | Verdict | How I decided |
+|---|---|---|---|---|
+| 1 | Matching query completes and returns a fit card | 4 of 5 | **MET (5/5)** | All 5 tries reached `create_fit_card`, `session["error"]` was `None`, and the fit card was non-empty (183–226 chars). |
+| 2 | Empty search stops before `suggest_outfit`, names what to change | 5 of 5 | **MET (5/5)** | No try has a `suggest_outfit` step in its trace. Every message names the keywords as the thing to change ("Try broader words…"). |
+| 3 | Search's item is the item both later tools receive | 5 of 5 | **MET (5/5)** | For each of the 5 queries, the id at `select` matches the `new_item id` passed to `suggest_outfit` and `create_fit_card` (`lst_002`, `lst_004`, `lst_007`, `lst_019`, `lst_005`). |
+| 4 | Fit card has the price, the platform, 15–80 words; 3+ of 5 distinct | 4 of 5 + 3 distinct | **MET (5/5)** | Every card contains `$45` and `Poshmark`, and runs 34–41 words. All 5 are different strings. |
+| 5 | Size filter matches whole tokens only | 5 of 5 | **MET (5/5)** | No listing returned for any of the 5 sizes broke the rule. `M` matched `S/M` and `M/L`, and `L` never matched `XL`. |
+
+### Diagnoses
+
+**No criterion missed.** Some of that is the agent working, and some is targets I set too low:
+
+- **Criterion 1 was too easy at 4 of 5.** I allowed one miss for regex misparses and quota failures. The regex parsed every query correctly, and the service pushed back 4 times during the run, but `generate.py`'s retry absorbed every one. **Tighter target: 5 of 5.**
+- **Criterion 4 measured the wrong thing as well as too little.** It checks that the price and platform *appear*, not that the caption makes sense. For platform sneakers, `suggest_outfit` advised "Skip these… you already own chunky white sneakers" in 5 of 5 tries, and then `create_fit_card` wrote a celebratory post anyway ("Almost bought these…", "Saved myself $48…"). Those cards would all pass criterion 4. **Tighter target:** *"the fit card's stance matches `suggest_outfit`'s buy/skip recommendation in 5 of 5 tries."* The mechanism: `create_fit_card`'s prompt tells the model to write a post about "this thrift find" and never passes along the recommendation, so the caption assumes a purchase.
+
+**A failure my criteria didn't cover: search relevance (`tools.py::search_listings`).** It appeared three times:
+
+1. `search_listings('graphic tee', max_price=30)` returns the cargo pants and the mesh top. Neither one is a tee. Their descriptions only *mention* wearing one ("layering with a long tee", "under a graphic tee").
+2. The empty-search diagnosis (`agent.py::explain_empty_search`) reuses that search, so `graphic tee under $10` suggests the mesh top at $15 as "the cheapest match."
+3. The stretch retry for `90s track jacket` returns 10 items, including a Bucket Hat and Platform Mary Janes.
+
+Printing the scores shows the mechanism:
+
+```
+=== graphic tee
+ 4  Y2K Baby Tee — Butterfly Print           [('graphic', 2), ('tee', 2)]
+ 2  Mesh Long-Sleeve Top — Black             [('graphic', 1), ('tee', 1)]
+ 1  Low-Rise Cargo Pants — Khaki             [('tee', 1)]
+=== 90s track jacket
+ 6  90s Track Jacket — Navy/White Stripe     [('jacket', 2), ('90s', 2), ('track', 2)]
+ 2  Bucket Hat — Reversible, Brown Plaid     [('90s', 2)]
+ 2  Platform Mary Janes — Black Patent       [('90s', 2)]
+```
+
+The tool works as specified. The spec's own rule ("listings scoring 0 are dropped") is the problem: any listing with one matching word survives, however far it falls below the best match. One root cause, three symptoms. It never broke a criterion, because the agent only uses the top result, which was always correct. It breaks everywhere the agent uses the rest of the list.
+
+**MCP side effect:** `run_eval.py` reported "36 model calls this session," but each try made two model calls. The `create_fit_card` calls run inside the MCP server process, so the agent's counter never sees them.
 
 ---
 
