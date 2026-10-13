@@ -21,9 +21,9 @@ import re
 
 import config
 import trace
-from tools import suggest_outfit, _platform
-from generate import ModelUnavailable  # noqa: F401 — handled in unit 4
-from mcp_client import call_tool
+from tools import suggest_outfit, _platform, _format_price
+from generate import ModelUnavailable
+from mcp_client import call_tool, MCPError
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -62,6 +62,35 @@ def _search(description: str, size: str | None, max_price: float | None) -> list
 def _fit_card(outfit: str, new_item: dict) -> str:
     """create_fit_card, called through the MCP server."""
     return call_tool("create_fit_card", {"outfit": outfit, "new_item": new_item})
+
+
+# ── failure messages ──────────────────────────────────────────────────────────
+
+def _mcp_detail(exc: Exception) -> str:
+    """
+    The useful part of an MCPError. A model failure on the MCP server arrives
+    wrapped as "The tool 'x' returned an error: Error executing tool x: <reason>",
+    so strip the wrapping and keep the reason.
+    """
+    text = str(exc).splitlines()[0]
+    text = re.sub(r"^The tool '[^']+' returned an error:\s*", "", text)
+    text = re.sub(r"^Error executing tool \S+:\s*", "", text)
+    return text.strip()
+
+
+def _model_down_message(session: dict, what: str, detail: str) -> str:
+    """Say what was found, what broke, and what to try."""
+    item = session["selected_item"] or {}
+    found = (
+        f"Found {item.get('title')} ({_format_price(item.get('price', 0))} on "
+        f"{_platform(item)}), but "
+        if item else ""
+    )
+    return (
+        f"{found}couldn't reach the AI model to {what}. {detail} "
+        f"Your search still worked. Run `python test.py` to check the "
+        f"connection, then ask again."
+    )
 
 
 # ── query parsing (regex, no model call) ─────────────────────────────────────
@@ -185,37 +214,81 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
         if next_step == "parse":
             session["parsed"] = parse_query(session["query"])
+            trace.step("parse_query", inputs=session["query"], returned=session["parsed"])
             next_step = "search"
 
         elif next_step == "search":
             p = session["parsed"]
-            session["search_results"] = _search(
-                p["description"], p["size"], p["max_price"]
-            )
+            try:
+                session["search_results"] = _search(
+                    p["description"], p["size"], p["max_price"]
+                )
+            except MCPError as exc:
+                session["error"] = (
+                    f"Couldn't reach the listings search service: {_mcp_detail(exc)} "
+                    f"Run `python mcp_client.py` to check the MCP server starts, "
+                    f"then ask again."
+                )
+                trace.step("search_listings (via MCP)", inputs=p,
+                           returned="MCPError", note="search unavailable, stopping")
+                next_step = "done"
+                continue
+
             # ── THE BRANCH ──
             if not session["search_results"]:
                 next_step = "explain_empty"
+                note = "branch: empty, going to explain_empty and stopping"
             else:
                 next_step = "select"
+                note = "branch: results found, going to select"
+            trace.step("search_listings (via MCP)", inputs=p,
+                       returned=session["search_results"], note=note)
 
         elif next_step == "explain_empty":
             session["error"] = explain_empty_search(session["parsed"])
+            trace.step("explain_empty", inputs=session["parsed"],
+                       returned=session["error"],
+                       note="re-ran search via MCP with filters relaxed; stopping before suggest_outfit")
             next_step = "done"
 
         elif next_step == "select":
             session["selected_item"] = session["search_results"][0]
+            trace.step("select", inputs=f"{len(session['search_results'])} results",
+                       returned=session["selected_item"],
+                       note=f"top result, id {session['selected_item'].get('id')}")
             next_step = "suggest_outfit"
 
         elif next_step == "suggest_outfit":
-            session["outfit_suggestion"] = suggest_outfit(
-                session["selected_item"], session["wardrobe"]
-            )
+            item = session["selected_item"]
+            n_items = len((session["wardrobe"] or {}).get("items") or [])
+            step_inputs = f"new_item id {item.get('id')} ({item.get('title')}), wardrobe: {n_items} items"
+            try:
+                session["outfit_suggestion"] = suggest_outfit(item, session["wardrobe"])
+            except ModelUnavailable as exc:
+                session["error"] = _model_down_message(session, "suggest outfits", str(exc))
+                trace.step("suggest_outfit", inputs=step_inputs,
+                           returned="ModelUnavailable", note="model unavailable, stopping")
+                next_step = "done"
+                continue
+            trace.step("suggest_outfit", inputs=step_inputs,
+                       returned=session["outfit_suggestion"])
             next_step = "create_fit_card"
 
         elif next_step == "create_fit_card":
-            session["fit_card"] = _fit_card(
-                session["outfit_suggestion"], session["selected_item"]
-            )
+            item = session["selected_item"]
+            step_inputs = f"outfit ({len(session['outfit_suggestion'])} chars), new_item id {item.get('id')} ({item.get('title')})"
+            try:
+                session["fit_card"] = _fit_card(session["outfit_suggestion"], item)
+            except MCPError as exc:
+                session["error"] = _model_down_message(
+                    session, "write the fit card", _mcp_detail(exc)
+                )
+                trace.step("create_fit_card (via MCP)", inputs=step_inputs,
+                           returned="MCPError", note="fit card failed on the MCP server, stopping")
+                next_step = "done"
+                continue
+            trace.step("create_fit_card (via MCP)", inputs=step_inputs,
+                       returned=session["fit_card"])
             next_step = "done"
 
     return session
